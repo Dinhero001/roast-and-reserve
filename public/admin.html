@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin · Paystack Settings</title>
+<style>
+  :root{
+    --char:#0E2A1D; --paper:#FFFFFF; --paper-dim:#E3EFE6;
+    --accent:#4FAE72; --line:#d7e6dc;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--char); color:var(--char);
+    font-family:'Segoe UI', Arial, sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card{
+    background:var(--paper); border-radius:14px; padding:32px 28px; width:100%; max-width:420px;
+    box-shadow:0 30px 60px -25px rgba(0,0,0,0.5);
+  }
+  h1{ font-size:20px; margin:0 0 4px; }
+  p.sub{ color:#5b6b60; font-size:13px; margin:0 0 22px; }
+  label{ display:block; font-size:12px; font-weight:600; color:#3c4a41; margin-bottom:6px; }
+  input{
+    width:100%; padding:10px 12px; border-radius:8px; border:1.5px solid var(--line);
+    font-size:14px; margin-bottom:16px;
+  }
+  input:focus{ outline:none; border-color:var(--accent); }
+  button{
+    width:100%; padding:12px; border-radius:8px; border:none; background:var(--accent);
+    color:#fff; font-weight:700; font-size:14px; cursor:pointer; margin-bottom:10px;
+  }
+  button:hover{ background:#3f9a61; }
+  button:disabled{ opacity:0.6; cursor:not-allowed; }
+  .msg{ font-size:13px; margin-bottom:16px; display:none; padding:10px 12px; border-radius:8px; }
+  .msg.error{ display:block; background:#fdecea; color:#a33; }
+  .msg.success{ display:block; background:#e9f7ee; color:#2b7a45; }
+  .status-pill{
+    display:inline-block; font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px;
+    background:var(--paper-dim); color:#3c4a41; margin-bottom:18px;
+  }
+  .status-pill.set{ background:#e9f7ee; color:#2b7a45; }
+  hr{ border:none; border-top:1px solid var(--line); margin:22px 0; }
+  #logoutBtn{ background:transparent; color:#a33; border:1.5px solid #f0c9c9; }
+  #logoutBtn:hover{ background:#fdecea; }
+</style>
+</head>
+<body>
+
+<!-- Login view -->
+<div class="card" id="loginCard">
+  <h1>Admin login</h1>
+  <p class="sub">Log in with your account. The first account ever created on this server is the admin.</p>
+  <div class="msg" id="loginMsg"></div>
+  <form id="loginForm">
+    <label for="loginEmail">Email</label>
+    <input type="email" id="loginEmail" required>
+    <label for="loginPassword">Password</label>
+    <input type="password" id="loginPassword" required>
+    <button type="submit">Log in</button>
+  </form>
+</div>
+
+<!-- Settings view -->
+<div class="card" id="settingsCard" style="display:none;">
+  <h1>Paystack settings</h1>
+  <p class="sub">Paste your keys from your Paystack dashboard (Settings → API Keys &amp; Webhooks). Use test keys until you're ready to go live.</p>
+  <span class="status-pill" id="statusPill">Not set up yet</span>
+  <div class="msg" id="settingsMsg"></div>
+  <form id="settingsForm">
+    <label for="publicKey">Public key</label>
+    <input type="text" id="publicKey" placeholder="pk_test_xxxxxxxxxxxx" required>
+    <label for="secretKey">Secret key</label>
+    <input type="password" id="secretKey" placeholder="sk_test_xxxxxxxxxxxx" required>
+    <button type="submit">Save keys</button>
+  </form>
+  <hr>
+  <button id="logoutBtn">Log out</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  // No token to manage in JavaScript anymore — logging in sets a secure
+  // httpOnly cookie automatically, and the browser sends it with every request.
+
+  const loginCard = document.getElementById('loginCard');
+  const settingsCard = document.getElementById('settingsCard');
+  const loginMsg = document.getElementById('loginMsg');
+  const settingsMsg = document.getElementById('settingsMsg');
+  const statusPill = document.getElementById('statusPill');
+
+  function showMsg(el, text, type){
+    el.textContent = text;
+    el.className = 'msg ' + type;
+  }
+
+  // If already logged in as admin (cookie still valid from a previous visit), skip straight to settings.
+  (async function checkExistingSession(){
+    try {
+      const res = await fetch('/api/auth/me');
+      if(res.ok){
+        const data = await res.json();
+        if(data.user.role === 'admin'){
+          loginCard.style.display = 'none';
+          settingsCard.style.display = 'block';
+          loadSettings();
+        }
+      }
+    } catch(err){ /* not logged in — show login form as normal */ }
+  })();
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if(!res.ok) return showMsg(loginMsg, data.error || 'Login failed.', 'error');
+
+      if(data.user.role !== 'admin'){
+        return showMsg(loginMsg, 'This account is not an admin. Only the first account created has admin access.', 'error');
+      }
+      loginCard.style.display = 'none';
+      settingsCard.style.display = 'block';
+      loadSettings();
+    } catch(err){
+      showMsg(loginMsg, 'Could not reach the server. Is it running?', 'error');
+    }
+  });
+
+  async function loadSettings(){
+    try {
+      const res = await fetch('/api/settings/paystack');
+      const data = await res.json();
+      if(res.ok){
+        if(data.publicKey) document.getElementById('publicKey').value = data.publicKey;
+        if(data.secretKeySet){
+          statusPill.textContent = 'Keys are set';
+          statusPill.classList.add('set');
+        }
+      }
+    } catch(err){ /* silent — form still usable */ }
+  }
+
+  document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const publicKey = document.getElementById('publicKey').value.trim();
+    const secretKey = document.getElementById('secretKey').value.trim();
+    try {
+      const res = await fetch('/api/settings/paystack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicKey, secretKey })
+      });
+      const data = await res.json();
+      if(!res.ok) return showMsg(settingsMsg, data.error || 'Could not save keys.', 'error');
+      showMsg(settingsMsg, 'Paystack keys saved. Your storefront can now accept real payments.', 'success');
+      statusPill.textContent = 'Keys are set';
+      statusPill.classList.add('set');
+      document.getElementById('secretKey').value = '';
+    } catch(err){
+      showMsg(settingsMsg, 'Could not reach the server.', 'error');
+    }
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    settingsCard.style.display = 'none';
+    loginCard.style.display = 'block';
+    document.getElementById('loginForm').reset();
+  });
+})();
+</script>
+</body>
+</html>
